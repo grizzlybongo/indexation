@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MédiaScrape</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --color-bg: #F3F4F4;
+      --color-primary: #853953;
+      --color-dark: #612D53;
+      --color-text: #2C2C2C;
+      --color-white: #FFFFFF;
+      --color-border: #E0E0E0;
+      --space-section: 24px;
+      --space-card: 16px;
+      --radius-card: 16px;
+      --shadow-card: 0 2px 12px rgba(0,0,0,0.06);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: 'Inter', sans-serif;
+      font-weight: 400;
+      color: var(--color-text);
+      background: var(--color-bg);
+    }
+
+    .topbar {
+      height: 56px;
+      width: 100%;
+      background: var(--color-dark);
+      color: var(--color-white);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 20px;
+    }
+
+    .topbar-inner {
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .brand {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--color-white);
+      letter-spacing: 0.1px;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      font-weight: 500;
+      color: #F0DFEA;
+      text-align: right;
+    }
+
+    .page {
+      max-width: 900px;
+      margin: var(--space-section) auto;
+      padding: 0 16px;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-section);
+    }
+
+    .card {
+      background: var(--color-white);
+      border-radius: var(--radius-card);
+      box-shadow: var(--shadow-card);
+      padding: var(--space-card);
+    }
+
+    .card-title {
+      margin: 0 0 14px;
+      color: var(--color-dark);
+      font-weight: 600;
+      font-size: 20px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-section);
+    }
+
+    .stack-col {
+      display: grid;
+      gap: var(--space-section);
+      align-content: start;
+    }
+
+    .inline-form {
+      display: flex;
+      align-items: center;
+      border: 1.5px solid var(--color-border);
+      border-radius: 999px;
+      background: var(--color-white);
+      overflow: hidden;
+      padding: 3px;
+    }
+
+    .inline-form input[type="text"] {
+      border: none;
+      outline: none;
+      flex: 1;
+      padding: 12px 16px;
+      font-size: 14px;
+      color: var(--color-text);
+      font-family: inherit;
+      background: transparent;
+    }
+
+    .inline-form input[type="text"]::placeholder {
+      color: #8A8A8A;
+    }
+
+    .send-btn {
+      border: none;
+      width: 42px;
+      height: 42px;
+      border-radius: 999px;
+      background: var(--color-primary);
+      color: var(--color-white);
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s ease;
+      flex-shrink: 0;
+    }
+
+    .send-btn:hover { background: var(--color-dark); }
+
+    .controls-row {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .field label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--color-primary);
+    }
+
+    .field input,
+    .field select {
+      width: 100%;
+      border: 1.5px solid var(--color-border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-family: inherit;
+      font-size: 14px;
+      color: var(--color-text);
+      background: var(--color-white);
+      outline: none;
+    }
+
+    .field input:focus,
+    .field select:focus,
+    .inline-form:focus-within {
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 2px rgba(133, 57, 83, 0.12);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      align-items: stretch;
+    }
+
+    .stat {
+      text-align: center;
+      padding: 4px 10px;
+    }
+
+    .stat:not(:last-child) {
+      border-right: 1px solid var(--color-border);
+    }
+
+    .stat-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--color-primary);
+      line-height: 1.1;
+    }
+
+    .stat-label {
+      margin-top: 4px;
+      font-size: 13px;
+      color: var(--color-text);
+      font-weight: 400;
+    }
+
+    .chart-image {
+      width: 100%;
+      display: block;
+      border-radius: 12px;
+      background: #FCFCFC;
+    }
+
+    .placeholder {
+      min-height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: var(--color-primary);
+      font-style: italic;
+      font-weight: 500;
+      background: #FCFCFC;
+      border-radius: 12px;
+    }
+
+    .table-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    thead th {
+      text-align: left;
+      color: var(--color-dark);
+      font-weight: 600;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--color-border);
+      white-space: nowrap;
+    }
+
+    tbody td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #EFEFEF;
+      vertical-align: middle;
+    }
+
+    tbody tr:nth-child(odd) { background: var(--color-white); }
+    tbody tr:nth-child(even) { background: #FAFAFA; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: lowercase;
+    }
+
+    .badge.done { background: #E8F5E9; color: #2E7D32; }
+    .badge.running { background: #FFF8E1; color: #F57F17; }
+    .badge.failed { background: #FFEBEE; color: #C62828; }
+    .badge.default { background: #F3F4F4; color: #5F6368; }
+
+    .empty-state {
+      text-align: center;
+      padding: 24px 8px;
+      font-style: italic;
+      color: var(--color-text);
+    }
+
+    .flash-stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .flash {
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      box-shadow: var(--shadow-card);
+      background: var(--color-white);
+      border-left: 4px solid var(--color-primary);
+    }
+
+    .flash.success { border-left-color: #2E7D32; }
+    .flash.warning { border-left-color: #F57F17; }
+    .flash.danger { border-left-color: #C62828; }
+
+    @media (max-width: 700px) {
+      .stats-grid { grid-template-columns: repeat(2, 1fr); row-gap: 12px; }
+      .stat:nth-child(2n) { border-right: none; }
+    }
+
+    @media (max-width: 600px) {
+      .two-col { grid-template-columns: 1fr; }
+      .controls-row { grid-template-columns: 1fr; }
+      .subtitle { display: none; }
+      .page { padding: 0 12px; }
+      .stats-grid { grid-template-columns: 1fr; }
+      .stat { border-right: none !important; border-bottom: 1px solid var(--color-border); padding: 10px; }
+      .stat:last-child { border-bottom: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">MédiaScrape</div>
+      <div class="subtitle">Indexation &amp; Recherche Multimédia</div>
+    </div>
+  </header>
+
+  <main class="page">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="flash-stack">
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    <section class="two-col">
+      <article class="card">
+        <h2 class="card-title">Start a Scrape</h2>
+        <form method="post" action="{{ url_for('run_scrape') }}">
+          <div class="inline-form">
+            <input type="text" name="url" placeholder="Enter a URL to scrape..." required>
+            <button class="send-btn" type="submit" aria-label="Start scrape">→</button>
+          </div>
+
+          <div class="controls-row">
+            <div class="field">
+              <label for="max_items">Max Items</label>
+              <input id="max_items" type="number" name="max_items" value="50" min="10" max="500">
+            </div>
+            <div class="field">
+              <label for="delay">Delay (s)</label>
+              <input id="delay" type="number" name="delay" value="0.5" min="0" max="5" step="0.1">
+            </div>
+          </div>
+        </form>
+      </article>
+
+      <div class="stack-col">
+        <article class="card">
+          <h2 class="card-title">Quick Search</h2>
+          <form method="get" action="{{ url_for('search_route') }}">
+            <div class="inline-form">
+              <input type="text" name="q" placeholder="Search indexed content...">
+              <button class="send-btn" type="submit" aria-label="Run search">→</button>
+            </div>
+
+            <div class="controls-row" style="grid-template-columns: 1fr;">
+              <div class="field">
+                <label for="filter_type">Filter by type</label>
+                <select id="filter_type" name="media_type">
+                  <option value="all">All</option>
+                  <option value="image">Image</option>
+                  <option value="link">Link</option>
+                  <option value="article">Article</option>
+                </select>
+              </div>
+            </div>
+          </form>
+        </article>
+
+        <article class="card">
+          <h2 class="card-title">Image Similarity Search</h2>
+          <form method="get" action="{{ url_for('search_route') }}">
+            <input type="hidden" name="type" value="image_similarity">
+            <div class="inline-form">
+              <input type="text" name="image_url" placeholder="Paste an image URL...">
+              <button class="send-btn" type="submit" aria-label="Run image similarity search">→</button>
+            </div>
+          </form>
+        </article>
+      </div>
+    </section>
+
+    <section class="card" aria-label="Stats bar">
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="stat-value">{{ stats.total_items if stats else 0 }}</div>
+          <div class="stat-label">Total Items</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">{{ stats.total_images if stats else 0 }}</div>
+          <div class="stat-label">Images</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">{{ stats.total_links if stats else 0 }}</div>
+          <div class="stat-label">Links</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">{{ stats.total_articles if stats else 0 }}</div>
+          <div class="stat-label">Articles</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="two-col">
+      <article class="card">
+        <h2 class="card-title" style="font-size: 18px;">Media Types</h2>
+        {% if charts and charts.media_types %}
+          <img class="chart-image" src="/{{ charts.media_types }}" alt="Media types chart">
+        {% else %}
+          <div class="placeholder">No data yet — run a scrape first</div>
+        {% endif %}
+      </article>
+
+      <article class="card">
+        <h2 class="card-title" style="font-size: 18px;">Top Domains</h2>
+        {% if charts and charts.top_domains %}
+          <img class="chart-image" src="/{{ charts.top_domains }}" alt="Top domains chart">
+        {% else %}
+          <div class="placeholder">No data yet — run a scrape first</div>
+        {% endif %}
+      </article>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">Recent Sessions</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>URL Scraped</th>
+              <th>Items Found</th>
+              <th>Status</th>
+              <th>Started At</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for session in sessions %}
+              <tr>
+                <td>{{ session.id }}</td>
+                <td>
+                  {% if session.target_url %}
+                    {{ session.target_url[:50] }}{% if session.target_url|length > 50 %}...{% endif %}
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+                <td>{{ session.total_items or 0 }}</td>
+                <td>
+                  {% set status = (session.status or 'unknown')|lower %}
+                  {% if status == 'done' %}
+                    <span class="badge done">done</span>
+                  {% elif status == 'running' %}
+                    <span class="badge running">running</span>
+                  {% elif status == 'failed' %}
+                    <span class="badge failed">failed</span>
+                  {% else %}
+                    <span class="badge default">{{ status }}</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if session.started_at %}
+                    {{ session.started_at.strftime('%d/%m/%Y %H:%M') }}
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="5" class="empty-state">No scrape sessions yet</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

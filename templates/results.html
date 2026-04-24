@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MédiaScrape Search Results</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --color-bg: #F3F4F4;
+      --color-primary: #853953;
+      --color-dark: #612D53;
+      --color-text: #2C2C2C;
+      --color-white: #FFFFFF;
+      --color-border: #E0E0E0;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      margin: 0;
+      background: var(--color-bg);
+      color: var(--color-text);
+      padding: 24px 16px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      color: var(--color-dark);
+      font-weight: 600;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      color: var(--color-dark);
+      font-weight: 600;
+      font-size: 20px;
+    }
+
+    .back-link {
+      display: inline-block;
+      margin-bottom: 16px;
+      color: var(--color-primary);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .back-link:hover { color: var(--color-dark); }
+
+    .card {
+      background: var(--color-white);
+      border-radius: 16px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+
+    .result {
+      border-bottom: 1px solid var(--color-border);
+      padding: 12px 0;
+    }
+
+    .result:last-child { border-bottom: none; }
+
+    .meta {
+      color: var(--color-primary);
+      font-size: 13px;
+      font-weight: 500;
+      margin: 4px 0 6px;
+    }
+
+    .url-line {
+      margin: 2px 0 6px;
+      font-size: 13px;
+      color: var(--color-text);
+      word-break: break-all;
+    }
+
+    .title-link {
+      color: var(--color-dark);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .title-link:hover {
+      color: var(--color-primary);
+      text-decoration: underline;
+    }
+
+    .empty {
+      font-style: italic;
+      color: var(--color-text);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Search Results</h1>
+    <a class="back-link" href="{{ url_for('dashboard') }}">&larr; Back to dashboard</a>
+
+    <div class="card">
+      <h2>Query</h2>
+      <p>{{ query or 'No query provided.' }}</p>
+    </div>
+
+    <div class="card">
+      <h2>Text Search</h2>
+      {% for item in text_results %}
+        <div class="result">
+          <div><a class="title-link" href="{{ item.url }}" target="_blank" rel="noreferrer">{{ item.title or 'Untitled' }}</a></div>
+          <div class="meta">Type: {{ item.media_type }} | Domain: {{ item.domain }} | Score: {{ '%.4f'|format(item.score or 0) }}</div>
+          <div>{{ item.description }}</div>
+        </div>
+      {% else %}
+        <p class="empty">No text results.</p>
+      {% endfor %}
+    </div>
+
+    <div class="card">
+      <h2>Image Similarity</h2>
+      {% for item in image_results %}
+        {% if item.error %}
+          <p class="empty">{{ item.error }}</p>
+        {% else %}
+          <div class="result">
+            <div><a class="title-link" href="{{ item.url }}" target="_blank" rel="noreferrer">{{ item.title or 'Untitled' }}</a></div>
+            <div class="url-line">URL: <a href="{{ item.url }}" target="_blank" rel="noreferrer">{{ item.url }}</a></div>
+            <div class="meta">Domain: {{ item.domain }} | Distance: {{ '%.4f'|format(item.distance or 0) }}</div>
+          </div>
+        {% endif %}
+      {% else %}
+        <p class="empty">No image similarity results.</p>
+      {% endfor %}
+    </div>
+  </div>
+</body>
+</html>
