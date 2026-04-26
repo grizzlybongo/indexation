@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, inspect, text
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.orm import Mapped, mapped_column, sessionmaker
 
@@ -85,6 +85,7 @@ class MediaItem(Base):
     # Placeholder for future refinement:
     # indexer.py will compute a NumPy-based color histogram and serialize it to JSON.
     feature_vector: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text_embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     scraped_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
 
@@ -109,5 +110,15 @@ class MediaItem(Base):
 
 
 def init_db() -> None:
-    """Create all tables in SQLite if they do not already exist."""
-    Base.metadata.create_all(bind=engine)
+    """Create tables and ensure schema compatibility with existing SQLite databases."""
+    Base.metadata.create_all(bind=engine, checkfirst=True)
+
+    # Existing SQLite files won't get new columns from create_all on an already-created table.
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "media_items" not in inspector.get_table_names():
+            return
+
+        existing_columns = {column["name"] for column in inspector.get_columns("media_items")}
+        if "text_embedding" not in existing_columns:
+            connection.execute(text("ALTER TABLE media_items ADD COLUMN text_embedding TEXT"))

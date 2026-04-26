@@ -14,6 +14,7 @@ Used by:
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from io import BytesIO
 from typing import Any
 import logging
@@ -22,11 +23,19 @@ import numpy as np
 import pandas as pd
 import requests
 from PIL import Image, UnidentifiedImageError
+try:
+    from sentence_transformers import SentenceTransformer  # pyright: ignore[reportMissingImports]
+except Exception:  # pragma: no cover - optional runtime dependency during bootstrap
+    SentenceTransformer = None  # type: ignore[assignment]
 from sqlalchemy.exc import SQLAlchemyError
 
 from models import MediaItem, ScrapeSession, SessionLocal
 from scraper import REQUEST_HEADERS
 from scraper import get_domain, scrape
+
+
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+PLACEHOLDER_TEXT_VALUES = {"untitled", "no description"}
 
 
 # TODO (search.py): expose deserialize_vector() for KNN similarity queries
@@ -94,14 +103,11 @@ def clean_data(items: list[dict]) -> pd.DataFrame:
     # Normalize media type.
     df["media_type"] = df["media_type"].fillna("").astype(str).str.lower().str.strip()
 
-    # Truncate description to max 500 chars.
-    df["description"] = df["description"].fillna("").astype(str).str.slice(0, 500)
-
-    # Fill missing title/description with defaults.
-    df["title"] = df["title"].fillna("").astype(str)
-    df.loc[df["title"].str.strip() == "", "title"] = "Untitled"
-
-    df.loc[df["description"].str.strip() == "", "description"] = "No description"
+    # Normalize text fields without injecting placeholder values.
+    df["title"] = df["title"].fillna("").astype(str).str.strip()
+    df["description"] = df["description"].fillna("").astype(str).str.slice(0, 500).str.strip()
+    df.loc[df["title"] == "", "title"] = None
+    df.loc[df["description"] == "", "description"] = None
 
     # Fill missing source_url/domain using URL fallback logic.
     df["source_url"] = df["source_url"].fillna("").astype(str)
@@ -213,6 +219,57 @@ def extract_features(image_url: str) -> list[float] | None:
     return None
 
 
+def _prepare_text_component(value: str | None) -> str:
+    """Normalize one text component and filter placeholder-like values."""
+    text_value = (value or "").strip()
+    if not text_value:
+        return ""
+    if text_value.lower() in PLACEHOLDER_TEXT_VALUES:
+        return ""
+    return text_value
+
+
+@lru_cache(maxsize=1)
+def _load_embed_model() -> Any:
+    """Load and cache the sentence-transformer model once per process."""
+    logger = logging.getLogger(__name__)
+
+    if SentenceTransformer is None:
+        logger.warning(
+            "[embed_text] sentence-transformers is unavailable. Returning NULL embeddings until dependency is installed."
+        )
+        return None
+
+    try:
+        return SentenceTransformer(EMBEDDING_MODEL_NAME)
+    except Exception as exc:
+        logger.exception("[embed_text] Failed to load embedding model '%s': %s", EMBEDDING_MODEL_NAME, exc)
+        return None
+
+
+def embed_text(title: str | None, description: str | None) -> list[float] | None:
+    """Generate a normalized 384-dim embedding for meaningful title/description text."""
+    text_parts = [_prepare_text_component(title), _prepare_text_component(description)]
+    text = " ".join(part for part in text_parts if part).strip()
+
+    # Skip semantic embedding for weak/empty text rather than writing dummy values.
+    if not text or len(text) < 5:
+        return None
+
+    model = _load_embed_model()
+    if model is None:
+        return None
+
+    try:
+        vector = model.encode(text, normalize_embeddings=True)
+        if vector is None:
+            return None
+        return vector.tolist()
+    except Exception as exc:
+        logging.getLogger(__name__).exception("[embed_text] Failed to encode text: %s", exc)
+        return None
+
+
 def serialize_vector(vector: list[float] | None) -> str | None:
     """Serialize feature vector list (expected length: 112) to JSON for DB storage."""
     if vector is None:
@@ -246,9 +303,18 @@ def index_items(df: pd.DataFrame, session_id: int) -> dict[str, int]:
     inserted = 0
     skipped = 0
     failed = 0
+    embedding_written = 0
+    embedding_skipped = 0
 
     if total_rows == 0:
-        return {"inserted": 0, "skipped": 0, "failed": 0, "total": 0}
+        return {
+            "inserted": 0,
+            "skipped": 0,
+            "failed": 0,
+            "total": 0,
+            "embedding_written": 0,
+            "embedding_skipped": 0,
+        }
 
     db = SessionLocal()
 
@@ -274,21 +340,46 @@ def index_items(df: pd.DataFrame, session_id: int) -> dict[str, int]:
                     continue
 
                 media_type = str(row.get("media_type", "")).strip().lower()
+                title_value = str(row.get("title", "")).strip() if row.get("title") is not None else ""
+                description_value = (
+                    str(row.get("description", "")).strip() if row.get("description") is not None else ""
+                )
+
+                title = title_value or None
+                description = description_value or None
+
+                source_url = str(row.get("source_url", url)).strip() or url
+                domain = str(row.get("domain", "")).strip() or get_domain(source_url)
+
+                file_extension_raw = row.get("file_extension")
+                file_extension = (
+                    file_extension_raw.strip() if isinstance(file_extension_raw, str) and file_extension_raw.strip() else None
+                )
+
                 vector_json: str | None = None
+                text_vector_json: str | None = None
 
                 if media_type == "image":
                     vector = extract_features(url)
                     vector_json = serialize_vector(vector)
 
+                text_vector = embed_text(title, description)
+                text_vector_json = serialize_vector(text_vector)
+                if text_vector_json is not None:
+                    embedding_written += 1
+                else:
+                    embedding_skipped += 1
+
                 item = MediaItem(
                     url=url,
-                    source_url=str(row.get("source_url", url)),
+                    source_url=source_url,
                     media_type=media_type or "link",
-                    title=str(row.get("title", "Untitled")),
-                    description=str(row.get("description", "No description")),
-                    domain=str(row.get("domain", get_domain(str(row.get("source_url", url))))),
-                    file_extension=row.get("file_extension"),
+                    title=title,
+                    description=description,
+                    domain=domain,
+                    file_extension=file_extension,
                     feature_vector=vector_json,
+                    text_embedding=text_vector_json,
                     is_indexed=True,
                     session_id=session_id,
                 )
@@ -315,7 +406,14 @@ def index_items(df: pd.DataFrame, session_id: int) -> dict[str, int]:
     finally:
         db.close()
 
-    return {"inserted": inserted, "skipped": skipped, "failed": failed, "total": total_rows}
+    return {
+        "inserted": inserted,
+        "skipped": skipped,
+        "failed": failed,
+        "total": total_rows,
+        "embedding_written": embedding_written,
+        "embedding_skipped": embedding_skipped,
+    }
 
 
 def reindex_all_images() -> dict[str, int]:
@@ -356,6 +454,47 @@ def reindex_all_images() -> dict[str, int]:
     return {"updated": updated, "failed": failed}
 
 
+def reembed_all() -> dict[str, int]:
+    """Recompute text embeddings for all media rows and persist as JSON vectors."""
+    db = SessionLocal()
+    updated = 0
+    failed = 0
+    skipped_null_text = 0
+
+    try:
+        rows = db.query(MediaItem).order_by(MediaItem.id.asc()).all()
+
+        for item in rows:
+            try:
+                normalized_title = _prepare_text_component(item.title)
+                normalized_description = _prepare_text_component(item.description)
+                item.title = normalized_title or None
+                item.description = normalized_description or None
+
+                vector = embed_text(item.title, item.description)
+                if vector is None:
+                    item.text_embedding = None
+                    skipped_null_text += 1
+                else:
+                    item.text_embedding = serialize_vector(vector)
+                    updated += 1
+
+                item.is_indexed = True
+                db.commit()
+
+            except Exception as exc:
+                db.rollback()
+                failed += 1
+                logging.getLogger(__name__).exception(
+                    "[reembed_all] Failed for id=%s, url=%s: %s", item.id, item.url, exc
+                )
+
+    finally:
+        db.close()
+
+    return {"updated": updated, "failed": failed, "skipped_null_text": skipped_null_text}
+
+
 def run_indexer(scrape_results: dict) -> dict[str, Any]:
     """Run full indexing flow from scraper output dict.
 
@@ -382,6 +521,8 @@ def run_indexer(scrape_results: dict) -> dict[str, Any]:
             "skipped": 0,
             "failed": 0,
             "total": 0,
+            "embedding_written": 0,
+            "embedding_skipped": 0,
         }
 
     cleaned_df = clean_data(items)
@@ -394,6 +535,8 @@ def run_indexer(scrape_results: dict) -> dict[str, Any]:
             "skipped": int(cleaned_df.attrs.get("dropped_duplicates", 0)),
             "failed": 0,
             "total": 0,
+            "embedding_written": 0,
+            "embedding_skipped": 0,
         }
 
     index_summary = index_items(cleaned_df, session_id=session_id)
@@ -408,6 +551,8 @@ def run_indexer(scrape_results: dict) -> dict[str, Any]:
         "skipped": combined_skipped,
         "failed": int(index_summary["failed"]),
         "total": int(index_summary["total"]),
+        "embedding_written": int(index_summary.get("embedding_written", 0)),
+        "embedding_skipped": int(index_summary.get("embedding_skipped", 0)),
     }
 
     logging.getLogger(__name__).info(

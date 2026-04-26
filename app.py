@@ -16,10 +16,11 @@ from typing import Any
 import requests
 from flask import Flask, flash, g, jsonify, redirect, render_template, request, url_for
 
-from indexer import reindex_all_images
+from indexer import reembed_all, reindex_all_images
 from indexer import run_indexer as index_data
 from models import MediaItem, ScrapeSession, SessionLocal as db
 from scraper import scrape
+from search import build_hybrid_index
 from search import search_by_image_similarity as image_similarity
 from search import search_by_text as text_search
 from search import get_stats
@@ -41,6 +42,19 @@ def get_db_session():
     if "db_session" not in g:
         g.db_session = db()
     return g.db_session
+
+
+def get_search_index() -> dict[str, Any]:
+    """Return app-cached hybrid search index, building it on first access."""
+    cache_key = "hybrid_search_index"
+    if cache_key not in app.extensions:
+        app.extensions[cache_key] = build_hybrid_index()
+    return app.extensions[cache_key]
+
+
+def invalidate_search_index() -> None:
+    """Invalidate cached hybrid search index after data changes."""
+    app.extensions.pop("hybrid_search_index", None)
 
 
 @app.teardown_appcontext
@@ -109,6 +123,7 @@ def run_scrape():
 
         index_summary = index_data(scrape_results)
         generate_all_charts()
+        invalidate_search_index()
 
         flash(
             (
@@ -146,7 +161,7 @@ def search_route():
     if image_url:
         image_results = image_similarity(image_url, top_n=10)
     elif query:
-        text_results = text_search(query)
+        text_results = text_search(query, search_index=get_search_index())
 
         # If query looks like a URL, also try image-similarity mode.
         if query.startswith("http://") or query.startswith("https://"):
@@ -164,7 +179,22 @@ def search_route():
 def reindex_route():
     """Recompute feature vectors for all image rows and return JSON summary."""
     summary = reindex_all_images()
+    invalidate_search_index()
     return jsonify({"updated": int(summary.get("updated", 0)), "failed": int(summary.get("failed", 0))})
+
+
+@app.post("/reembed")
+def reembed_route():
+    """Recompute text embeddings for all rows and return JSON summary."""
+    summary = reembed_all()
+    invalidate_search_index()
+    return jsonify(
+        {
+            "updated": int(summary.get("updated", 0)),
+            "failed": int(summary.get("failed", 0)),
+            "skipped_null_text": int(summary.get("skipped_null_text", 0)),
+        }
+    )
 
 
 if __name__ == "__main__":

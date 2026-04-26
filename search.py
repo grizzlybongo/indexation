@@ -1,7 +1,7 @@
 """Search and retrieval module for MédiaScrape.
 
 This module provides:
-- Text search using TF-IDF + cosine similarity
+- Text search using hybrid BM25 + semantic ranking
 - Image similarity search using KNN over color histogram vectors
 - Simple filters by media type and domain
 - Dashboard-ready aggregate statistics
@@ -9,16 +9,24 @@ This module provides:
 
 from __future__ import annotations
 
+from functools import lru_cache
+import re
 from typing import Any
 import logging
 
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.neighbors import NearestNeighbors
 from sqlalchemy import func
+try:
+    from rank_bm25 import BM25Okapi  # pyright: ignore[reportMissingImports]
+except Exception:  # pragma: no cover - optional during bootstrap
+    BM25Okapi = None  # type: ignore[assignment]
+try:
+    from sentence_transformers import SentenceTransformer  # pyright: ignore[reportMissingImports]
+except Exception:  # pragma: no cover - optional during bootstrap
+    SentenceTransformer = None  # type: ignore[assignment]
 
-from indexer import deserialize_vector, extract_features
+from indexer import EMBEDDING_MODEL_NAME, deserialize_vector, extract_features
 from models import MediaItem, ScrapeSession, SessionLocal
 
 
@@ -42,13 +50,34 @@ def _to_result_dict(item: MediaItem, score: float = 0.0) -> dict[str, Any]:
     }
 
 
-def build_tfidf_index() -> tuple[TfidfVectorizer | None, np.ndarray | None, list[int]]:
-    """Build a TF-IDF index from indexed media rows.
+TEXT_TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9]+")
 
-    Returns:
-        (vectorizer, tfidf_matrix, item_ids)
-    """
-    # TODO (app.py): cache this index on startup, rebuild after each new scrape session
+
+def _tokenize(text: str) -> list[str]:
+    """Tokenize a string for BM25 with a lightweight, language-agnostic regex."""
+    return [token for token in TEXT_TOKEN_PATTERN.findall((text or "").lower()) if token]
+
+
+@lru_cache(maxsize=1)
+def _load_query_embed_model() -> Any:
+    """Load and cache the query embedding model once per process."""
+    logger = logging.getLogger(__name__)
+
+    if SentenceTransformer is None:
+        logger.warning(
+            "[search_by_text] sentence-transformers is unavailable. Falling back to BM25-only ranking."
+        )
+        return None
+
+    try:
+        return SentenceTransformer(EMBEDDING_MODEL_NAME)
+    except Exception as exc:
+        logger.exception("[search_by_text] Failed loading query embedding model: %s", exc)
+        return None
+
+
+def build_hybrid_index() -> dict[str, Any]:
+    """Build in-memory index structures for hybrid text retrieval."""
     db = SessionLocal()
 
     try:
@@ -59,81 +88,160 @@ def build_tfidf_index() -> tuple[TfidfVectorizer | None, np.ndarray | None, list
             .all()
         )
 
-        if not items:
-            return None, None, []
-
-        item_ids = [item.id for item in items]
-        corpus = [f"{item.title or ''} {item.description or ''}".strip() for item in items]
-
-        # Keep indexing robust even with very short/empty textual fields.
-        if not any(text.strip() for text in corpus):
-            return None, None, []
-
-        vectorizer = TfidfVectorizer(stop_words="english")
-        tfidf_sparse = vectorizer.fit_transform(corpus)
-        tfidf_matrix = tfidf_sparse.toarray()
-
-        return vectorizer, tfidf_matrix, item_ids
-
     finally:
         db.close()
 
+    if not items:
+        return {
+            "items": [],
+            "bm25": None,
+            "corpus_tokens": [],
+            "semantic_matrix": None,
+            "semantic_item_positions": [],
+        }
 
-def search_by_text(query: str, top_n: int = 10) -> list[dict[str, Any]]:
-    """Search indexed items using TF-IDF cosine similarity."""
-    # TODO (app.py): pass top_n from Flask route query parameter
+    corpus = [f"{item.title or ''} {item.description or ''}".strip() for item in items]
+    corpus_tokens = [_tokenize(doc) for doc in corpus]
+
+    bm25_model = None
+    if BM25Okapi is not None and any(tokens for tokens in corpus_tokens):
+        bm25_model = BM25Okapi(corpus_tokens)
+
+    semantic_vectors: list[list[float]] = []
+    semantic_item_positions: list[int] = []
+    for position, item in enumerate(items):
+        vector = deserialize_vector(item.text_embedding)
+        if vector is None:
+            continue
+        if len(vector) != 384:
+            continue
+        semantic_vectors.append(vector)
+        semantic_item_positions.append(position)
+
+    semantic_matrix = (
+        np.array(semantic_vectors, dtype=np.float64)
+        if semantic_vectors
+        else None
+    )
+
+    return {
+        "items": items,
+        "bm25": bm25_model,
+        "corpus_tokens": corpus_tokens,
+        "semantic_matrix": semantic_matrix,
+        "semantic_item_positions": semantic_item_positions,
+    }
+
+
+def reciprocal_rank_fusion(
+    bm25_ranks: list[int], semantic_ranks: list[int], total_items: int, k: int = 60
+) -> np.ndarray:
+    """Fuse ranked lists using Reciprocal Rank Fusion (RRF)."""
+    scores = np.zeros(total_items, dtype=np.float64)
+
+    for rank, idx in enumerate(bm25_ranks):
+        scores[idx] += 1.0 / (k + rank + 1)
+
+    for rank, idx in enumerate(semantic_ranks):
+        scores[idx] += 1.0 / (k + rank + 1)
+
+    return scores
+
+
+def search_by_text(
+    query: str,
+    top_n: int = 10,
+    search_index: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Run hybrid retrieval with BM25 and semantic scoring fused by RRF."""
     if not query or not query.strip():
         return []
 
-    vectorizer, tfidf_matrix, item_ids = build_tfidf_index()
-    if vectorizer is None or tfidf_matrix is None or not item_ids:
+    index_data = search_index or build_hybrid_index()
+    items: list[MediaItem] = index_data.get("items", [])
+    if not items:
         return []
 
-    try:
-        query_vec = vectorizer.transform([query]).toarray()
-    except ValueError:
-        # Common with query made only of stopwords after preprocessing.
+    query_tokens = _tokenize(query)
+    bm25_scores = np.zeros(len(items), dtype=np.float64)
+
+    bm25_model = index_data.get("bm25")
+    if bm25_model is not None and query_tokens:
+        bm25_scores = np.array(bm25_model.get_scores(query_tokens), dtype=np.float64)
+
+    semantic_scores = np.zeros(len(items), dtype=np.float64)
+    semantic_item_positions = np.array(index_data.get("semantic_item_positions", []), dtype=np.int64)
+    semantic_matrix = index_data.get("semantic_matrix")
+
+    if semantic_matrix is not None and semantic_item_positions.size > 0:
+        model = _load_query_embed_model()
+        if model is not None:
+            try:
+                query_vector = np.array(model.encode(query, normalize_embeddings=True), dtype=np.float64)
+                query_norm = np.linalg.norm(query_vector)
+                if query_norm > 0:
+                    normalized_query = query_vector / query_norm
+                    matrix_norms = np.linalg.norm(semantic_matrix, axis=1)
+                    similarities = np.dot(semantic_matrix, normalized_query) / np.clip(matrix_norms, 1e-8, None)
+                    for local_pos, global_pos in enumerate(semantic_item_positions.tolist()):
+                        semantic_scores[global_pos] = float(similarities[local_pos])
+            except Exception as exc:
+                logging.getLogger(__name__).exception("[search_by_text] Semantic scoring failed: %s", exc)
+
+    bm25_ranks = (
+        np.argsort(bm25_scores)[::-1].tolist()
+        if bm25_model is not None and query_tokens
+        else []
+    )
+
+    semantic_ranks: list[int] = []
+    if semantic_item_positions.size > 0:
+        ranked_local = np.argsort(semantic_scores[semantic_item_positions])[::-1]
+        semantic_ranks = semantic_item_positions[ranked_local].astype(int).tolist()
+
+    if not bm25_ranks and not semantic_ranks:
         return []
 
-    similarities = cosine_similarity(query_vec, tfidf_matrix).flatten()
+    fused_scores = reciprocal_rank_fusion(
+        bm25_ranks=bm25_ranks,
+        semantic_ranks=semantic_ranks,
+        total_items=len(items),
+    )
+    fused_ranks = np.argsort(fused_scores)[::-1]
 
-    if similarities.size == 0:
-        return []
+    results: list[dict[str, Any]] = []
+    seen_signatures: set[str] = set()
 
-    ranked_indices = np.argsort(similarities)[::-1]
+    for idx in fused_ranks:
+        item = items[int(idx)]
+        bm25_score = float(bm25_scores[int(idx)])
+        semantic_score = float(semantic_scores[int(idx)])
 
-    db = SessionLocal()
-    try:
-        id_to_item = {
-            item.id: item
-            for item in db.query(MediaItem).filter(MediaItem.id.in_(item_ids)).all()
-        }
+        if bm25_score <= 0.0 and semantic_score <= 0.0:
+            continue
 
-        results: list[dict[str, Any]] = []
-        seen_signatures: set[str] = set()
-        for idx in ranked_indices:
-            score = float(similarities[idx])
-            if score <= 0.0:
-                continue
+        if bm25_score > 0.0 and semantic_score > 0.0:
+            match_reason = "hybrid"
+        elif semantic_score > 0.0:
+            match_reason = "semantic"
+        else:
+            match_reason = "bm25"
 
-            item_id = item_ids[int(idx)]
-            item = id_to_item.get(item_id)
-            if item is None:
-                continue
+        signature = f"{item.media_type}::{item.url}"
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
 
-            signature = f"{item.media_type}::{item.url}"
-            if signature in seen_signatures:
-                continue
-            seen_signatures.add(signature)
+        row = _to_result_dict(item, score=float(fused_scores[int(idx)]))
+        row["match_reason"] = match_reason
+        row["bm25_score"] = bm25_score
+        row["semantic_score"] = semantic_score
+        results.append(row)
 
-            results.append(_to_result_dict(item, score=score))
-            if len(results) >= top_n:
-                break
+        if len(results) >= top_n:
+            break
 
-        return results
-
-    finally:
-        db.close()
+    return results
 
 
 def build_knn_index() -> tuple[NearestNeighbors | None, list[int]]:
@@ -215,6 +323,14 @@ def search_by_image_similarity(image_url: str, top_n: int = 5) -> list[dict[str,
             if item is None:
                 continue
 
+            similarity = max(0.0, min(100.0, round((1.0 - float(distance)) * 100.0, 1)))
+            if similarity > 85.0:
+                similarity_label = "Very similar"
+            elif similarity > 60.0:
+                similarity_label = "Similar"
+            else:
+                similarity_label = "Loosely similar"
+
             results.append(
                 {
                     "id": item.id,
@@ -223,6 +339,8 @@ def search_by_image_similarity(image_url: str, top_n: int = 5) -> list[dict[str,
                     "media_type": item.media_type,
                     "domain": item.domain,
                     "distance": float(distance),
+                    "similarity": similarity,
+                    "similarity_label": similarity_label,
                 }
             )
 

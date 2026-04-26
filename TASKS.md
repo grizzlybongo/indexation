@@ -1,9 +1,11 @@
 # MédiaScrape — Project Task Tracker
 
 ## Overall Progress
-![Progress](https://progress-bar.dev/100/?title=Overall)
-- **Modules done:** 10 / 10
-- **Last updated:** 2026-03-30
+![Progress](https://progress-bar.dev/100/?title=Legacy%20Baseline)
+![Progress](https://progress-bar.dev/100/?title=Semantic%20Upgrade)
+- **Baseline modules done:** 10 / 10
+- **Semantic upgrade steps done:** 9 / 9
+- **Last updated:** 2026-04-24
 
 ---
 
@@ -20,7 +22,7 @@
 | 7 | `app.py` | ✅ Done | Flask routes and app entry point | All modules | templates done |
 | 8 | `templates/` | ✅ Done | index.html + results.html Flask templates | app.py | app.py is refined |
 | 9 | `tests/test_scraper.py` | ⬜ Pending | pytest unit tests for core modules | scraper.py, indexer.py, search.py | Any module changes |
-| 10 | `demo.ipynb` | ✅ Done | Jupyter notebook full pipeline demo | All modules | — |
+| 10 | `demo.ipynb` | ✅ Done | Jupyter notebook full pipeline demo (semantic comparison + PCA executed) | All modules | — |
 
 ---
 
@@ -65,3 +67,8 @@
 - Templates: added `templates/index.html` and `templates/results.html` so Flask routes render without `TemplateNotFound`
 - Refinement: indexer now uses HSV histograms with 16 bins per channel (48-length vectors) and supports full image-vector reindexing
  - Demo: notebook runs full pipeline on Wikipedia URLs, all charts render inline, explanations in French
+- Semantic upgrade tracking now lives in `SEMANTIC_UPGRADE_PROGRESS.md` for step-level execution visibility
+- Semantic upgrade phases completed so far: Step 1 (schema), Step 2 (deps), Step 3 (index-time embeddings), Step 6 (reembed backfill)
+- Semantic upgrade phases completed so far now include Step 4 (hybrid retrieval) and Step 5 (app cache lifecycle)
+- Semantic upgrade now also includes Step 7 (UI readability for image similarity) and Step 9 (semantic regression tests)
+- Semantic upgrade Step 8 completed: demo notebook created and executed with TF-IDF vs hybrid comparison and PCA visualization

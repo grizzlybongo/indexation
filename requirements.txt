@@ -12,6 +12,8 @@ matplotlib==3.9.2
 
 # Search and ML
 scikit-learn==1.5.2
+rank-bm25>=0.2.2
+sentence-transformers>=3.0.0
 
 # Database ORM
 SQLAlchemy==2.0.36
