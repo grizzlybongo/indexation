@@ -1,0 +1,46 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# --- Virtual environments ---
+.venv/
+.venv-*/
+venv/
+env/
+
+# --- Environment / secrets ---
+.env
+.env.*
+
+# --- Testing ---
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Databases (generated locally by scraping) ---
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Generated dashboard charts (rebuilt by visualizer.py) ---
+static/charts/*.png
+
+# --- Model / cache folders ---
+.cache/
+models_cache/
+
+# --- Editors / IDEs ---
+.vscode/
+.idea/
+*.swp
+
+# --- OS files ---
+Thumbs.db
+desktop.ini
+.DS_Store
